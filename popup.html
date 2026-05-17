@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resume Tailor</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+<!-- ── ONBOARDING SCREEN ── -->
+<div id="screen-onboarding" class="screen hidden">
+  <div class="header">
+    <div class="logo">RT</div>
+    <h1>Resume Tailor</h1>
+    <p class="subtitle">One-time setup — build your master career document</p>
+  </div>
+
+  <div class="form-group">
+    <label>Your Name (for PDF filenames)</label>
+    <input type="text" id="user-name" placeholder="e.g. Meera Hussain" />
+  </div>
+
+  <div class="form-group">
+    <label>OpenAI API Key</label>
+    <input type="password" id="api-key-onboard" placeholder="sk-..." />
+  </div>
+
+  <div class="form-group">
+    <label>Master Career Document</label>
+    <div class="field-hint">All your experiences, projects, skills, and bullet points — include everything, even items not on any current resume.</div>
+    <textarea id="master-doc-onboard" class="resume-paste tall" placeholder="Paste your complete career history here..."></textarea>
+  </div>
+
+  <div class="form-group">
+    <label>Agent Notes <span class="optional">(optional)</span></label>
+    <div class="field-hint">Hard constraints for the AI — e.g. "SkillScrolls pipeline was collaborative, not solo" or "always frame Colaberry as data engineering."</div>
+    <textarea id="agent-notes-onboard" class="resume-paste" placeholder="Enter any behavioral constraints..."></textarea>
+  </div>
+
+  <button class="btn-primary" id="btn-save-setup">Save &amp; Continue</button>
+  <div class="error-msg" id="onboard-error"></div>
+</div>
+
+<!-- ── MAIN SCREEN ── -->
+<div id="screen-main" class="screen hidden">
+  <div class="top-bar">
+    <div class="logo-sm">RT</div>
+    <span class="app-name">Resume Tailor</span>
+    <button class="icon-btn" id="btn-history" title="History">☰</button>
+    <button class="icon-btn" id="btn-settings" title="Settings">⚙</button>
+  </div>
+
+  <div class="job-card">
+    <div class="job-field">
+      <span class="field-label">Role</span>
+      <span class="field-value editable" id="job-title" contenteditable="true">—</span>
+    </div>
+    <div class="job-field">
+      <span class="field-label">Company</span>
+      <span class="field-value editable" id="job-company" contenteditable="true">—</span>
+    </div>
+    <div class="scrape-note" id="scrape-note"></div>
+  </div>
+
+  <button class="btn-primary" id="btn-tailor">Tailor Resume</button>
+
+  <div class="status-area hidden" id="status-area">
+    <div class="status-spinner" id="spinner"></div>
+    <div class="status-text" id="status-text"></div>
+  </div>
+
+  <div class="result-area hidden" id="result-area">
+    <div class="result-header">
+      <div id="match-badge" class="match-badge hidden"></div>
+      <div id="track-badge" class="track-badge hidden"></div>
+    </div>
+    <div class="gap-section hidden" id="gap-section">
+      <div class="gap-label">Gaps</div>
+      <div id="gap-list"></div>
+    </div>
+    <div class="result-buttons">
+      <button class="btn-latex" id="btn-overleaf">Open in Overleaf</button>
+      <button class="btn-download" id="btn-download">⬇ Download PDF</button>
+    </div>
+  </div>
+
+  <div class="error-msg" id="main-error"></div>
+</div>
+
+<!-- ── HISTORY SCREEN ── -->
+<div id="screen-history" class="screen hidden">
+  <div class="top-bar">
+    <button class="icon-btn" id="btn-back-history">←</button>
+    <span class="app-name">History</span>
+    <button class="icon-btn" id="btn-clear-history" title="Clear history">✕</button>
+  </div>
+  <div id="history-list"></div>
+</div>
+
+<!-- ── SETTINGS SCREEN ── -->
+<div id="screen-settings" class="screen hidden">
+  <div class="top-bar">
+    <button class="icon-btn" id="btn-back-settings">←</button>
+    <span class="app-name">Settings</span>
+  </div>
+
+  <div class="form-group">
+    <label>Your Name</label>
+    <input type="text" id="settings-name" placeholder="e.g. Meera Hussain" />
+  </div>
+
+  <div class="form-group">
+    <label>OpenAI API Key</label>
+    <input type="password" id="settings-api-key" placeholder="sk-..." />
+  </div>
+
+  <div class="form-group">
+    <label>Master Career Document</label>
+    <textarea id="settings-master-doc" class="resume-paste tall" placeholder="Your complete career history..."></textarea>
+    <div id="master-doc-warn" class="field-warn" style="display:none"></div>
+  </div>
+
+  <div class="form-group">
+    <label>Agent Notes <span class="optional">(optional)</span></label>
+    <textarea id="settings-agent-notes" class="resume-paste" placeholder="Hard constraints for the AI..."></textarea>
+  </div>
+
+  <div class="form-group">
+    <label>LaTeX Template <span class="optional">(for Copy LaTeX)</span></label>
+    <div class="field-hint">Paste your full .tex file. The AI will reuse your preamble and contact info exactly, only modifying Experience, Projects, and Skills.</div>
+    <textarea id="settings-latex-template" class="resume-paste tall" placeholder="Paste your .tex resume here..."></textarea>
+  </div>
+
+  <button class="btn-primary" id="btn-save-settings">Save Settings</button>
+  <div class="success-msg hidden" id="settings-success">Saved!</div>
+  <div class="error-msg" id="settings-error"></div>
+</div>
+
+<script src="jspdf.umd.min.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>
