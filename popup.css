@@ -653,3 +653,111 @@ body {
   color: #9ca3af;
   margin-left: auto;
 }
+
+/* ── Cover Letter Toggle ───────────────────────────────────────────────── */
+
+.cl-toggle-row {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0 4px;
+}
+
+.cl-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cl-toggle-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: #d1d5db;
+  border-radius: 10px;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.cl-toggle-track input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.cl-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.2s;
+  pointer-events: none;
+}
+
+.cl-toggle-track input:checked ~ .cl-toggle-thumb {
+  transform: translateX(16px);
+}
+
+.cl-toggle-track:has(input:checked) {
+  background: #4f46e5;
+}
+
+/* ── Cover Letter Result Section ───────────────────────────────────────── */
+
+.cover-letter-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.cl-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+/* ── Draft Answer Screen ── */
+.draft-result {
+  margin-top: 12px;
+}
+
+.draft-answer-box {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 12px;
+  color: #374151;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.btn-copy {
+  width: 100%;
+  padding: 8px;
+  background: #fff;
+  border: 1.5px solid #4f46e5;
+  color: #4f46e5;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-copy:hover { background: #f5f3ff; }

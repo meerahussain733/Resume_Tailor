@@ -1,5 +1,7 @@
 // State
 let tailoredText = '';
+let coverLetterText = '';
+let currentJdText = '';
 let currentJob = { company: '', title: '' };
 let mainInitialized = false;
 let isGeneratingLatex = false;
@@ -30,7 +32,7 @@ document.getElementById('btn-save-setup').addEventListener('click', async () => 
   const err   = document.getElementById('onboard-error');
 
   if (!name)                      return showError(err, 'Please enter your name.');
-  if (!key.startsWith('sk-')) return showError(err, 'OpenAI API key should start with sk-.');
+  if (!key) return showError(err, 'Please enter your Gemini API key.');
   if (!doc)                       return showError(err, 'Please paste your master career document.');
 
   err.textContent = '';
@@ -47,6 +49,7 @@ async function initMain() {
 
     document.getElementById('btn-settings').addEventListener('click', () => { initSettings(); showScreen('settings'); });
     document.getElementById('btn-history').addEventListener('click', () => { initHistory(); showScreen('history'); });
+    document.getElementById('btn-draft').addEventListener('click', () => { initDraft(); showScreen('draft'); });
     document.getElementById('btn-tailor').addEventListener('click', tailorResume);
 
     document.getElementById('job-title').addEventListener('input', e => {
@@ -60,7 +63,7 @@ async function initMain() {
   // Scrape job on every visit to main screen; fall back to last saved job
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.url?.includes('linkedin.com/jobs')) {
+    if (isSupportedJobPage(tab?.url)) {
       const job = await scrapeCurrentTab(tab.id);
       if (job?.description) {
         await storage('set', { last_job: job });
@@ -88,7 +91,7 @@ async function tailorResume() {
   let jdText = '';
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.url?.includes('linkedin.com/jobs')) {
+    if (isSupportedJobPage(tab?.url)) {
       const job = await scrapeCurrentTab(tab.id);
       jdText = job?.description || '';
       if (job?.company) { currentJob.company = job.company; document.getElementById('job-company').textContent = job.company; }
@@ -111,11 +114,13 @@ async function tailorResume() {
   }
 
   showEl('status-area');
-  setStatus('Analyzing with OpenAI...');
+  setStatus('Analyzing with Gemini...');
   const btn = document.getElementById('btn-tailor');
   btn.disabled = true;
 
+  const wantsCoverLetter = document.getElementById('toggle-cover-letter').checked;
   const jdTrimmed = jdText.length > 6000 ? jdText.slice(0, 6000) + '\n[truncated]' : jdText;
+  currentJdText = jdTrimmed;
   const prompt = buildPrompt(jdTrimmed, data.master_doc, data.agent_notes || '');
 
   let responseText;
@@ -177,6 +182,23 @@ async function tailorResume() {
   overleafBtn.disabled = false;
   overleafBtn.onclick = handleOverleaf;
 
+  // Cover letter generation
+  hideEl('cover-letter-section');
+  coverLetterText = '';
+  if (wantsCoverLetter) {
+    setStatus('Generating cover letter...');
+    showEl('status-area');
+    try {
+      const clPrompt = buildCoverLetterPrompt(currentJdText, data.master_doc, tailoredText, data.agent_notes || '');
+      coverLetterText = await callOpenAI(data.api_key, clPrompt);
+      document.getElementById('btn-download-cl').onclick = downloadCoverLetterPDF;
+      showEl('cover-letter-section');
+    } catch (e) {
+      showError(errEl, `Cover letter error: ${e.message}`);
+    }
+    setStatus('Done!', true);
+  }
+
   await logApplication({
     company: currentJob.company,
     title: currentJob.title,
@@ -189,23 +211,22 @@ async function tailorResume() {
 // ── Prompt ────────────────────────────────────────────────────────────────
 
 function buildPrompt(jdText, masterDoc, agentNotes) {
-  const trackInstruction = `Detect the role type from the job description: AI (LLM/NLP/GenAI/agentic systems), DA (analytics/BI/SQL/dashboards), or ML (modeling/research/MLOps). Assemble the resume emphasizing experiences, skills, and projects most relevant to the detected type.`;
-
   const agentSection = agentNotes
     ? `AGENT NOTES — follow these hard constraints exactly:\n${agentNotes}\n\n`
     : '';
 
-  return `You are a professional resume writer. Follow these rules without exception:
+  const system = `You are a professional resume writer. Follow these rules without exception:
 
 1. ZERO FABRICATION — every claim must come directly from the master document. Do not invent metrics, scope, or projects.
 2. NO PLACEHOLDERS — never output text like [Your Name], [City], [Date], [relevant skill], or any bracket-enclosed template text. If a piece of information is not in the master document, omit that field or section entirely.
 3. NO PADDING — do not write vague generic bullets ("collaborated on processes", "employed best practices") unless the master document provides specific supporting detail. A short resume with strong specific bullets beats a long resume with filler.
 4. REFRAME, DON'T INVENT — you may rephrase existing bullets to incorporate JD keywords, but the underlying fact must exist in the master document.
-5. STAR FORMAT — write every bullet as: strong action verb + what you did (specific technology/method) + measurable result or impact. Example: "Reduced reporting query time by 40% by building dbt models that replaced 6 manual SQL scripts." If the master document has no metric for a bullet, use action + specific context instead of a vague statement. Never invent a number.
+5. STAR FORMAT — write every bullet as: strong action verb + what you did (specific technology/method) + measurable result or impact. If the master document has no metric for a bullet, use action + specific context instead of a vague statement. Never invent a number.
 6. SKILLS — copy the full Technical Skills section from the master document verbatim, then reorder categories to put the most JD-relevant ones first. Never drop individual skills or entire categories.
-7. NO META-TEXT — do not add any commentary, explanation, notes, or closing remarks anywhere in your output. Any sentence beginning with "This resume", "Note:", "I have", "The above", or "This format" is strictly forbidden. The output ends at the last line of the resume — nothing after it.
+7. NO META-TEXT — do not add any commentary, explanation, notes, or closing remarks. The output ends at the last line of the resume — nothing after it.
+${agentSection}`;
 
-${agentSection}${trackInstruction}
+  const user = `Detect the role type from the job description: AI (LLM/NLP/GenAI/agentic systems), DA (analytics/BI/SQL/dashboards), or ML (modeling/research/MLOps). Tailor the resume to emphasize the most relevant experiences and skills for that role type.
 
 MASTER CAREER DOCUMENT:
 ${masterDoc}
@@ -220,7 +241,7 @@ Tasks:
 4. Score the match 0–100 based on how well the candidate's actual background fits the JD.
 5. List up to 3 gaps (JD requirements absent from the master doc), or "None".
 
-Output in EXACTLY this format:
+Output in EXACTLY this format with no extra text before or after:
 
 ROLE_TYPE: [AI|DA|ML]
 MATCH_SCORE: [0-100]
@@ -229,7 +250,9 @@ GAP_ANALYSIS:
 [bullet list, one per line, or "None"]
 
 TAILORED_RESUME:
-[Only include sections with real data from the master document. No placeholder text of any kind. Contact info only if present in the master document.]`;
+[Full resume using only real data from the master document. No placeholder text of any kind.]`;
+
+  return { system, user };
 }
 
 // ── Response parser ───────────────────────────────────────────────────────
@@ -319,7 +342,9 @@ async function handleOverleaf() {
 
 function buildLatexPrompt(resumeText, latexTemplate) {
   if (latexTemplate) {
-    return `You are given a LaTeX resume template and a tailored resume (plain text) that signals which content is most relevant for a target role. Produce a modified LaTeX document following these rules exactly:
+    return {
+      system: `You are a LaTeX resume formatter. Output only complete compilable LaTeX source — no explanation, no code fences, no markdown. Never alter any content; only reorder for relevance.`,
+      user: `You are given a LaTeX resume template and a tailored resume (plain text) that signals which content is most relevant for a target role. Produce a modified LaTeX document following these rules exactly:
 
 1. Keep the preamble, \\newcommand definitions, and heading/contact block EXACTLY as in the template — do not change a single character.
 2. Keep the Education section exactly as-is.
@@ -327,26 +352,90 @@ function buildLatexPrompt(resumeText, latexTemplate) {
 4. For Projects: include only projects that appear in the tailored resume text. For each included project, keep ALL original bullet points word-for-word from the template — do not rewrite or drop any bullet. Only reorder bullets so the most JD-relevant ones appear first.
 5. For Technical Skills: reorder skill categories so the most JD-relevant appear first. Keep every skill from the template unchanged.
 6. Use the exact same LaTeX commands as the template (\\resumeSubheading, \\resumeItem, \\resumeProjectHeading, etc.).
-7. Output only the complete compilable LaTeX source — no explanation, no code fences, no markdown.
 
 LATEX TEMPLATE:
 ${latexTemplate}
 
 TAILORED RESUME TEXT (use only to determine relevance ordering — never replace template content with this):
-${resumeText}`;
+${resumeText}`
+    };
   }
 
-  // Fallback if no template stored
-  return `Convert the following resume text into a complete, compilable sb2nov LaTeX document. Use these commands:
+  return {
+    system: `You are a LaTeX resume formatter. Output only complete compilable LaTeX source — no explanation, no code fences, no markdown.`,
+    user: `Convert the following resume text into a complete, compilable sb2nov LaTeX document. Use these commands:
 \\resumeSubheading{Title}{Dates}{Organization}{Location}
 \\resumeProjectHeading{\\textbf{Name} $|$ \\emph{Stack}}{Dates}
 \\resumeItem{bullet}
 \\resumeItemListStart ... \\resumeItemListEnd
 \\resumeSubHeadingListStart ... \\resumeSubHeadingListEnd
-Output only the complete LaTeX source — no explanation, no code fences.
 
 RESUME TEXT:
-${resumeText}`;
+${resumeText}`
+  };
+}
+
+// ── Cover Letter ─────────────────────────────────────────────────────────
+
+function buildCoverLetterPrompt(jdText, masterDoc, tailoredResume, agentNotes) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const agentSection = agentNotes ? `HARD CONSTRAINTS:\n${agentNotes}\n\n` : '';
+
+  return {
+    system: `You are writing a professional cover letter. Rules:
+- Use only facts from the MASTER CAREER DOCUMENT. Do not fabricate any experience, project, or skill.
+- Never write "Dear Hiring Manager" — write "Dear [Company Name] Team,".
+- Today's date is ${today}. Use the candidate's real name from the master document.
+- Output ONLY the cover letter text — nothing before or after the letter.
+${agentSection}`,
+    user: `Write a cover letter for this job application.
+
+STRUCTURE:
+1. Date line (${today}), blank line, then "Dear [Company] Team,"
+2. Opening: one strong sentence connecting your top qualification to this specific role and why this company.
+3. Body (1-2 paragraphs): 2-3 specific accomplishments that directly match the JD. Name technologies and outcomes.
+4. Closing: genuine interest + clear next step.
+5. "Sincerely," followed by the candidate's name.
+
+MASTER CAREER DOCUMENT:
+${masterDoc}
+
+JOB DESCRIPTION:
+${jdText}
+
+TAILORED RESUME (context only — use master document for facts):
+${tailoredResume}`
+  };
+}
+
+async function downloadCoverLetterPDF() {
+  if (!coverLetterText) return;
+
+  const data = await storage('get', ['user_name']);
+  const userName = (data.user_name || 'Candidate').replace(/\s+/g, '_');
+  const company  = (currentJob.company || 'Company').replace(/\s+/g, '_');
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+
+  const margin     = 72;
+  const maxWidth   = doc.internal.pageSize.getWidth() - margin * 2;
+  const lineHeight = 15;
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'normal');
+
+  const lines = doc.splitTextToSize(coverLetterText, maxWidth);
+  let y = margin;
+
+  lines.forEach(line => {
+    if (y + lineHeight > pageHeight - margin) { doc.addPage(); y = margin; }
+    doc.text(line, margin, y);
+    y += lineHeight;
+  });
+
+  doc.save(`${company}_${userName}_CoverLetter.pdf`);
 }
 
 // ── PDF Download ──────────────────────────────────────────────────────────
@@ -401,7 +490,7 @@ async function initSettings() {
     const ok       = document.getElementById('settings-success');
 
     if (!name) return showError(err, 'Name is required.');
-    if (key && !key.startsWith('sk-')) return showError(err, 'OpenAI API key should start with sk-.');
+    if (key && key.length < 10) return showError(err, 'Gemini API key looks too short.');
 
     err.textContent = '';
     const toSave = { user_name: name, agent_notes: notes, latex_template: latex };
@@ -414,6 +503,80 @@ async function initSettings() {
   };
 
   document.getElementById('btn-back-settings').onclick = () => showScreen('main');
+}
+
+// ── Draft Answer ──────────────────────────────────────────────────────────
+
+function buildDraftPrompt(question, masterDoc, jdText, agentNotes) {
+  const agentSection = agentNotes ? `HARD CONSTRAINTS:\n${agentNotes}\n\n` : '';
+
+  return {
+    system: `You are writing a professional answer to a job application question on behalf of the candidate. Rules:
+- Use only facts from the MASTER CAREER DOCUMENT. Do not fabricate any experience, project, metric, or skill.
+- Write in first person as the candidate — direct, confident, and specific.
+- Do not use bullet points or headers. Write in flowing prose (2-4 short paragraphs).
+- Keep it under 300 words.
+- Do not use any bracket placeholders. If information is unavailable, omit that angle entirely.
+- Output ONLY the answer — no preamble, no notes, nothing before or after.
+${agentSection}`,
+    user: `Write a professional answer to the following job application question. Ground every claim in the candidate's actual background. Highlight the most relevant experience and skills that align with the job description.
+
+QUESTION:
+${question}
+
+MASTER CAREER DOCUMENT:
+${masterDoc}
+
+JOB DESCRIPTION:
+${jdText}`
+  };
+}
+
+async function initDraft() {
+  document.getElementById('draft-question').value = '';
+  document.getElementById('draft-result').classList.add('hidden');
+  document.getElementById('draft-error').textContent = '';
+  document.getElementById('draft-status-area').classList.add('hidden');
+
+  document.getElementById('btn-back-draft').onclick = () => showScreen('main');
+
+  document.getElementById('btn-generate-draft').onclick = async () => {
+    const question = document.getElementById('draft-question').value.trim();
+    const errEl    = document.getElementById('draft-error');
+    errEl.textContent = '';
+
+    if (!question) return (errEl.textContent = 'Please enter a question.');
+
+    const data = await storage('get', ['master_doc', 'agent_notes', 'api_key', 'last_job']);
+    if (!data.api_key)    return (errEl.textContent = 'No API key found. Check Settings.');
+    if (!data.master_doc) return (errEl.textContent = 'No master career document found. Check Settings.');
+
+    const jdText = data.last_job?.description || '';
+
+    document.getElementById('draft-status-area').classList.remove('hidden');
+    document.getElementById('draft-result').classList.add('hidden');
+    document.getElementById('btn-generate-draft').disabled = true;
+
+    try {
+      const prompt = buildDraftPrompt(question, data.master_doc, jdText, data.agent_notes || '');
+      const answer = await callOpenAI(data.api_key, prompt);
+      document.getElementById('draft-answer-text').textContent = answer;
+      document.getElementById('draft-result').classList.remove('hidden');
+    } catch (e) {
+      errEl.textContent = `API error: ${e.message}`;
+    } finally {
+      document.getElementById('draft-status-area').classList.add('hidden');
+      document.getElementById('btn-generate-draft').disabled = false;
+    }
+  };
+
+  document.getElementById('btn-copy-draft').onclick = async () => {
+    const text = document.getElementById('draft-answer-text').textContent;
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById('btn-copy-draft');
+    btn.textContent = 'Copied!';
+    setTimeout(() => (btn.textContent = 'Copy'), 2000);
+  };
 }
 
 // ── History ───────────────────────────────────────────────────────────────
@@ -499,7 +662,16 @@ async function loadLastJob() {
   }
 }
 
-// ── LinkedIn scraper ──────────────────────────────────────────────────────
+// ── Job page detection ────────────────────────────────────────────────────
+
+function isSupportedJobPage(url) {
+  return url?.includes('linkedin.com/jobs') ||
+         url?.includes('indeed.com/viewjob') ||
+         url?.includes('indeed.com/jobs') ||
+         url?.includes('joinhandshake.com/job-search/');
+}
+
+// ── Job scraper ───────────────────────────────────────────────────────────
 
 async function scrapeCurrentTab(tabId) {
   const results = await chrome.scripting.executeScript({
@@ -507,42 +679,102 @@ async function scrapeCurrentTab(tabId) {
     func: () => {
       function t(el) { return el?.innerText?.trim() || ''; }
 
-      let title =
-        t(document.querySelector('.job-details-jobs-unified-top-card__job-title h1')) ||
-        t(document.querySelector('.jobs-unified-top-card__job-title h1')) ||
-        t(document.querySelector('h1.t-24')) ||
-        t(document.querySelector('h1[class*="job-title"]')) ||
-        t(document.querySelector('[class*="top-card"] h1')) ||
-        t(document.querySelector('h1'));
+      const url = window.location.href;
+      const isIndeed = url.includes('indeed.com');
+      const isHandshake = url.includes('joinhandshake.com');
 
-      let company =
-        t(document.querySelector('.job-details-jobs-unified-top-card__company-name a')) ||
-        t(document.querySelector('.jobs-unified-top-card__company-name a')) ||
-        t(document.querySelector('.topcard__org-name-link')) ||
-        t(document.querySelector('[class*="company-name"] a')) ||
-        t(document.querySelector('[class*="hiring-company"] a')) ||
-        t(document.querySelector('a[href*="/company/"]'));
+      let title = '', company = '', description = '';
 
-      // Fallback: parse document.title ("Job Title at Company | LinkedIn")
-      if (!title || !company) {
-        const raw = (document.title || '').replace(/\s*\|\s*LinkedIn.*$/i, '').trim();
-        const atIdx = raw.search(/\s+at\s+/i);
-        if (atIdx !== -1) {
-          if (!title)   title   = raw.slice(0, atIdx).trim();
-          if (!company) company = raw.slice(atIdx).replace(/^\s+at\s+/i, '').replace(/\s+in\s+.+$/i, '').trim();
+      if (isIndeed) {
+        title =
+          t(document.querySelector('h1[data-testid="jobsearch-JobInfoHeader-title"]')) ||
+          t(document.querySelector('h1.jobsearch-JobInfoHeader-title')) ||
+          t(document.querySelector('h1[class*="title"]')) ||
+          t(document.querySelector('h1'));
+
+        company =
+          t(document.querySelector('[data-testid="inlineHeader-companyName"] a')) ||
+          t(document.querySelector('[data-testid="inlineHeader-companyName"]')) ||
+          t(document.querySelector('.jobsearch-InlineCompanyRating-companyHeader a')) ||
+          t(document.querySelector('[class*="companyName"] a')) ||
+          t(document.querySelector('[class*="companyName"]'));
+
+        description =
+          t(document.querySelector('#jobDescriptionText')) ||
+          t(document.querySelector('[id*="jobDescription"]'));
+
+        if (!title || !company) {
+          const raw = (document.title || '').replace(/\s*\|\s*Indeed.*$/i, '').trim();
+          const dashIdx = raw.lastIndexOf(' - ');
+          if (dashIdx !== -1) {
+            if (!title)   title   = raw.slice(0, dashIdx).trim();
+            if (!company) company = raw.slice(dashIdx + 3).trim();
+          }
         }
+
+      } else if (isHandshake) {
+        title =
+          t(document.querySelector('h1[class*="job-title"]')) ||
+          t(document.querySelector('h1[class*="title"]')) ||
+          t(document.querySelector('h1'));
+
+        company =
+          t(document.querySelector('[class*="employer-profile"] h2')) ||
+          t(document.querySelector('[class*="employer-name"] a')) ||
+          t(document.querySelector('[class*="employer-name"]')) ||
+          t(document.querySelector('a[href*="/employers/"]'));
+
+        description =
+          t(document.querySelector('[class*="job-description"]')) ||
+          t(document.querySelector('[class*="posting-description"]')) ||
+          t(document.querySelector('[class*="description"]'));
+
+        if (!title || !company) {
+          const raw = (document.title || '').replace(/\s*\|\s*Handshake.*$/i, '').trim();
+          const atIdx = raw.search(/\s+at\s+/i);
+          if (atIdx !== -1) {
+            if (!title)   title   = raw.slice(0, atIdx).trim();
+            if (!company) company = raw.slice(atIdx).replace(/^\s+at\s+/i, '').trim();
+          }
+        }
+
+      } else {
+        // LinkedIn
+        title =
+          t(document.querySelector('.job-details-jobs-unified-top-card__job-title h1')) ||
+          t(document.querySelector('.jobs-unified-top-card__job-title h1')) ||
+          t(document.querySelector('h1.t-24')) ||
+          t(document.querySelector('h1[class*="job-title"]')) ||
+          t(document.querySelector('[class*="top-card"] h1')) ||
+          t(document.querySelector('h1'));
+
+        company =
+          t(document.querySelector('.job-details-jobs-unified-top-card__company-name a')) ||
+          t(document.querySelector('.jobs-unified-top-card__company-name a')) ||
+          t(document.querySelector('.topcard__org-name-link')) ||
+          t(document.querySelector('[class*="company-name"] a')) ||
+          t(document.querySelector('[class*="hiring-company"] a')) ||
+          t(document.querySelector('a[href*="/company/"]'));
+
+        if (!title || !company) {
+          const raw = (document.title || '').replace(/\s*\|\s*LinkedIn.*$/i, '').trim();
+          const atIdx = raw.search(/\s+at\s+/i);
+          if (atIdx !== -1) {
+            if (!title)   title   = raw.slice(0, atIdx).trim();
+            if (!company) company = raw.slice(atIdx).replace(/^\s+at\s+/i, '').replace(/\s+in\s+.+$/i, '').trim();
+          }
+        }
+
+        description =
+          t(document.querySelector('#job-details')) ||
+          t(document.querySelector('.jobs-description__content')) ||
+          t(document.querySelector('.jobs-description-content__text')) ||
+          t(document.querySelector('[class*="jobs-description"]')) ||
+          t(document.querySelector('[class*="job-description"]')) ||
+          t(document.querySelector('[class*="description__text"]'));
       }
 
-      const descEl =
-        document.querySelector('#job-details') ||
-        document.querySelector('.jobs-description__content') ||
-        document.querySelector('.jobs-description-content__text') ||
-        document.querySelector('[class*="jobs-description"]') ||
-        document.querySelector('[class*="job-description"]') ||
-        document.querySelector('[class*="description__text"]');
-
-      let description = t(descEl);
-
+      // Universal fallback: biggest JD-looking block
       if (!description) {
         let best = null, bestLen = 200;
         document.querySelectorAll('div, section, article').forEach(el => {
@@ -552,7 +784,7 @@ async function scrapeCurrentTab(tabId) {
             best = el; bestLen = txt.length;
           }
         });
-        description = t(best);
+        if (best) description = t(best);
       }
 
       return { title, company, description };
@@ -561,20 +793,22 @@ async function scrapeCurrentTab(tabId) {
   return results?.[0]?.result || {};
 }
 
-// ── OpenAI API (called directly from popup — avoids MV3 service worker kills) ──
+// ── Gemini API (called directly from popup — avoids MV3 service worker kills) ──
 
 async function callOpenAI(apiKey, prompt) {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const { system, user } = typeof prompt === 'object' ? prompt : { system: null, user: prompt };
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: user }] }],
+    generationConfig: { maxOutputTokens: 8192, temperature: 0.2 }
+  };
+  if (system) body.systemInstruction = { parts: [{ text: system }] };
+
+  const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }]
-    })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -583,7 +817,7 @@ async function callOpenAI(apiKey, prompt) {
   }
 
   const data = await response.json();
-  return data.choices?.[0]?.message?.content || '';
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
